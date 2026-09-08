@@ -1,31 +1,27 @@
 import { prisma } from '@/lib/prisma';
 import { DEFAULT_STUDY_PLAN_WEEKS } from '@/lib/constants';
+import { seededShuffle } from '@/lib/random';
 
 const QUESTIONS_PER_SKILL = 2;
 
-/** Deterministic seeded PRNG (mulberry32) so a diagnostic's question set is stable across page loads. */
-function seededRandom(seed: string) {
-  let h = 1779033703 ^ seed.length;
-  for (let i = 0; i < seed.length; i++) {
-    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
-    h = (h << 13) | (h >>> 19);
-  }
-  return function () {
-    h = Math.imul(h ^ (h >>> 16), 2246822507);
-    h = Math.imul(h ^ (h >>> 13), 3266489909);
-    h ^= h >>> 16;
-    return (h >>> 0) / 4294967296;
-  };
-}
+export async function startOrResumeDiagnostic(userId: string, examId: string) {
+  const existing = await prisma.diagnosticAssessment.findFirst({
+    where: { userId, examId, status: 'IN_PROGRESS' },
+    include: { attempt: true },
+  });
+  if (existing) return existing;
 
-function seededShuffle<T>(items: T[], seed: string): T[] {
-  const rand = seededRandom(seed);
-  const arr = [...items];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
+  const assessment = await prisma.diagnosticAssessment.create({
+    data: { userId, examId },
+  });
+  await prisma.attempt.create({
+    data: { userId, type: 'DIAGNOSTIC', diagnosticAssessmentId: assessment.id },
+  });
+
+  return prisma.diagnosticAssessment.findUniqueOrThrow({
+    where: { id: assessment.id },
+    include: { attempt: true },
+  });
 }
 
 /** Selects a domain-balanced, skill-balanced set of questions for a diagnostic assessment. */
@@ -56,6 +52,9 @@ interface BreakdownEntry {
 }
 
 export async function scoreDiagnostic(diagnosticAssessmentId: string) {
+  const existingResult = await prisma.diagnosticResult.findUnique({ where: { diagnosticAssessmentId } });
+  if (existingResult) return existingResult; // idempotent: a retried/duplicate "complete" call is a no-op
+
   const assessment = await prisma.diagnosticAssessment.findUniqueOrThrow({
     where: { id: diagnosticAssessmentId },
     include: { attempt: { include: { responses: { include: { question: { include: { skill: { include: { objective: { include: { domain: true } } } } } } } } } } },
@@ -94,8 +93,10 @@ export async function scoreDiagnostic(diagnosticAssessmentId: string) {
 
   const priorities = domainBreakdown.map((d, i) => ({ rank: i + 1, domainId: d.id, domainName: d.name, accuracy: d.accuracy }));
 
-  const result = await prisma.diagnosticResult.create({
-    data: {
+  const result = await prisma.diagnosticResult.upsert({
+    where: { diagnosticAssessmentId },
+    update: {},
+    create: {
       diagnosticAssessmentId,
       overallScore,
       domainBreakdown,

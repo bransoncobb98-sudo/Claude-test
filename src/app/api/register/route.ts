@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { registerSchema } from '@/lib/validation';
+import { sendEmail } from '@/lib/email';
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -30,6 +31,8 @@ export async function POST(req: NextRequest) {
   const user = await prisma.user.create({
     data: { firstName, lastName, email: normalizedEmail, passwordHash },
   });
+
+  sendEmail(user.email, { type: 'WELCOME', firstName: user.firstName }).catch(() => {});
 
   return NextResponse.json({ id: user.id, email: user.email });
 }

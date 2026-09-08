@@ -35,8 +35,11 @@ actually works end-to-end:
    `reviewStatus` exist so generated content can be added later without a migration; no LLM
    integration code is included.
 2. **Real transactional email delivery (§25)** — `lib/email.ts` defines `sendEmail()` and
-   the specific templates (welcome, purchase confirmation, expiration warnings, etc.) but
-   logs to console in dev; swapping in Resend/Postmark/SES is a one-file change.
+   the specific templates (welcome, purchase confirmation, diagnostic/study reminders,
+   weekly progress report, expiration warnings, password reset), and it's already wired up
+   at the real trigger points (registration, purchase, the `/api/cron/access-reminders`
+   job). It logs to console until `EMAIL_PROVIDER_API_KEY` is set and a provider
+   (Resend/Postmark/SES) is connected in that one file.
 3. **Rate limiting / WAF-level protections (§32)** — basic input validation (Zod) and
    auth/role checks are implemented on every mutating route; a production deploy should add
    an edge rate limiter (e.g. Vercel Firewall or Upstash) — noted in `README.md`.

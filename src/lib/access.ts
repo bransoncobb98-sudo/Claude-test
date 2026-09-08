@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 
 export interface AccessStatus {
@@ -47,4 +48,18 @@ export async function getAccessStatus(userId: string, examId?: string): Promise<
 export async function hasActiveAccess(userId: string, examId?: string): Promise<boolean> {
   const status = await getAccessStatus(userId, examId);
   return status.active;
+}
+
+/**
+ * Gate for paid-content pages (diagnostic, study sessions, practice exams).
+ * Admins always pass (free admin access per the product brief). Anyone
+ * without an active AccessGrant is redirected to the renew/purchase page.
+ */
+export async function requireActiveAccess(
+  user: { id: string; role: 'STUDENT' | 'ADMIN' },
+  examId?: string
+) {
+  if (user.role === 'ADMIN') return;
+  const active = await hasActiveAccess(user.id, examId);
+  if (!active) redirect('/account?reason=access-required');
 }

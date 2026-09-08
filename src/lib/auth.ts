@@ -30,6 +30,31 @@ declare module 'next-auth/jwt' {
   }
 }
 
+/**
+ * Core credential verification, factored out of the NextAuth provider so it
+ * can be unit tested without spinning up the full NextAuth request cycle.
+ * Returns the safe user fields on success, or null for any failure reason
+ * (unknown email, bad password, suspended account) — intentionally
+ * indistinguishable to callers, to avoid leaking which check failed.
+ */
+export async function verifyCredentials(email: string, password: string) {
+  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+  if (!user) return null;
+
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  if (!valid) return null;
+
+  if (user.suspended) return null;
+
+  return {
+    id: user.id,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+  };
+}
+
 export const authOptions: NextAuthOptions = {
   session: { strategy: 'jwt' },
   pages: {
@@ -44,22 +69,7 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
-
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email.toLowerCase().trim() },
-        });
-        if (!user) return null;
-
-        const valid = await bcrypt.compare(credentials.password, user.passwordHash);
-        if (!valid) return null;
-
-        return {
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          role: user.role,
-        };
+        return verifyCredentials(credentials.email, credentials.password);
       },
     }),
   ],

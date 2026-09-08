@@ -24,6 +24,7 @@ model User {
   firstName    String
   lastName     String
   role         UserRole @default(STUDENT)
+  suspended    Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
