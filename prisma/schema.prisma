@@ -1,0 +1,574 @@
+// TX Arts Pathway — Prisma schema
+// See docs/database-schema.md for the modeling rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Identity ----------
+
+enum UserRole {
+  STUDENT
+  ADMIN
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         UserRole @default(STUDENT)
+  suspended    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile               Profile?
+  diagnosticAssessments DiagnosticAssessment[]
+  attempts              Attempt[]
+  masteryRecords        MasteryRecord[]
+  studyPlans            StudyPlan[]
+  practiceExamAttempts  PracticeExamAttempt[]
+  mistakes              Mistake[]
+  bookmarks             Bookmark[]
+  purchases             Purchase[]
+  accessGrants          AccessGrant[]
+  auditLogs             AuditLog[]
+  questionsCreated      Question[]             @relation("QuestionCreatedBy")
+
+  @@index([role])
+}
+
+enum OnboardingGoal {
+  NEED_TO_PASS
+  HAVE_NOT_TAKEN_YET
+  FAILED_PREVIOUSLY
+  ASSESS_READINESS
+  STUDYING_WHILE_WORKING
+}
+
+model Profile {
+  id                    String          @id @default(cuid())
+  userId                String          @unique
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  certificationArea     String?
+  targetExamId          String?
+  targetExam            Exam?           @relation(fields: [targetExamId], references: [id])
+  testDate              DateTime?
+  teachingExperience    String?
+  priorAttempts         Int?
+  confidenceRating      Int? // 1-5 self-rated
+  goal                  OnboardingGoal?
+  goalDetails           String?
+  onboardingCompletedAt DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+}
+
+// ---------- Content graph ----------
+
+model Exam {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  published   Boolean  @default(false)
+  isDemo      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  domains               Domain[]
+  profiles              Profile[]
+  diagnosticAssessments DiagnosticAssessment[]
+  studyPlans            StudyPlan[]
+  practiceExams         PracticeExam[]
+  products              Product[]
+  accessGrants          AccessGrant[]
+}
+
+model Domain {
+  id          String   @id @default(cuid())
+  examId      String
+  exam        Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String
+  description String?
+  weight      Int      @default(1)
+  order       Int      @default(0)
+  published   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  objectives Objective[]
+
+  @@unique([examId, slug])
+  @@index([examId])
+}
+
+model Objective {
+  id          String   @id @default(cuid())
+  domainId    String
+  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  code        String?
+  name        String
+  description String?
+  order       Int      @default(0)
+  published   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  skills Skill[]
+
+  @@index([domainId])
+}
+
+model Skill {
+  id          String    @id @default(cuid())
+  objectiveId String
+  objective   Objective @relation(fields: [objectiveId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String
+  description String?
+  order       Int       @default(0)
+  published   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  lessons        Lesson[]
+  questions      Question[]
+  masteryRecords MasteryRecord[]
+  studyPlanItems StudyPlanItem[]
+  attempts       Attempt[]
+
+  @@unique([objectiveId, slug])
+  @@index([objectiveId])
+}
+
+model Lesson {
+  id          String   @id @default(cuid())
+  skillId     String
+  skill       Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  title       String
+  content     String // markdown
+  keyConcepts String[] @default([])
+  example     String?
+  videoUrl    String?
+  order       Int      @default(0)
+  published   Boolean  @default(false)
+  isDemo      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([skillId])
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  MULTIPLE_SELECT
+  SCENARIO
+  MATCHING
+  ORDERING
+  IMAGE_BASED
+  SHORT_ANSWER
+}
+
+enum ReviewStatus {
+  DRAFT
+  APPROVED
+}
+
+model Question {
+  id           String       @id @default(cuid())
+  skillId      String
+  skill        Skill        @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  topic        String?
+  type         QuestionType @default(MULTIPLE_CHOICE)
+  difficulty   Int          @default(3) // 1 (easiest) - 5 (hardest)
+  prompt       String
+  explanation  String
+  source       String?
+  tags         String[]     @default([])
+  imageUrl     String?
+  audioUrl     String?
+  shortAnswer  String? // expected answer for SHORT_ANSWER type
+  published    Boolean      @default(false)
+  isDemo       Boolean      @default(false)
+  aiGenerated  Boolean      @default(false)
+  reviewStatus ReviewStatus @default(DRAFT)
+  createdById  String?
+  createdBy    User?        @relation("QuestionCreatedBy", fields: [createdById], references: [id])
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  options   QuestionOption[]
+  responses Response[]
+  mistakes  Mistake[]
+  bookmarks Bookmark[]
+
+  @@index([skillId, published])
+  @@index([difficulty])
+}
+
+model QuestionOption {
+  id           String   @id @default(cuid())
+  questionId   String
+  question     Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  label        String // "A" | "B" | "C" | "D" ...
+  text         String
+  isCorrect    Boolean  @default(false)
+  order        Int      @default(0)
+  matchKey     String? // for MATCHING type: pairs an option with its match target
+  correctOrder Int? // for ORDERING type: correct position
+
+  @@index([questionId])
+}
+
+// ---------- Assessment / response graph ----------
+
+enum AttemptType {
+  DIAGNOSTIC
+  STUDY_CHECK
+  STUDY_PRACTICE
+  MASTERY_CHECK
+  MISTAKE_REVIEW
+  PRACTICE_EXAM
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+model Attempt {
+  id                     String                @id @default(cuid())
+  userId                 String
+  user                   User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type                   AttemptType
+  skillId                String?
+  skill                  Skill?                @relation(fields: [skillId], references: [id])
+  diagnosticAssessmentId String?               @unique
+  diagnosticAssessment   DiagnosticAssessment? @relation(fields: [diagnosticAssessmentId], references: [id])
+  practiceExamAttemptId  String?               @unique
+  practiceExamAttempt    PracticeExamAttempt?  @relation(fields: [practiceExamAttemptId], references: [id])
+  status                 AttemptStatus         @default(IN_PROGRESS)
+  startedAt              DateTime              @default(now())
+  completedAt            DateTime?
+  score                  Float? // percent correct, 0-100
+
+  responses Response[]
+
+  @@index([userId, type])
+  @@index([skillId])
+}
+
+model Response {
+  id                String   @id @default(cuid())
+  attemptId         String
+  attempt           Attempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId        String
+  question          Question @relation(fields: [questionId], references: [id])
+  selectedOptionIds String[] @default([])
+  orderedOptionIds  String[] @default([]) // for ORDERING questions
+  shortAnswerText   String?
+  isCorrect         Boolean
+  timeSpentSeconds  Int      @default(0)
+  confidence        Int? // 1-5 self-rated, optional
+  createdAt         DateTime @default(now())
+
+  @@index([attemptId])
+  @@index([questionId])
+}
+
+model DiagnosticAssessment {
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  examId      String
+  exam        Exam          @relation(fields: [examId], references: [id])
+  status      AttemptStatus @default(IN_PROGRESS)
+  startedAt   DateTime      @default(now())
+  completedAt DateTime?
+
+  attempt Attempt?
+  result  DiagnosticResult?
+
+  @@index([userId, examId])
+}
+
+model DiagnosticResult {
+  id                     String               @id @default(cuid())
+  diagnosticAssessmentId String               @unique
+  diagnosticAssessment   DiagnosticAssessment @relation(fields: [diagnosticAssessmentId], references: [id], onDelete: Cascade)
+  overallScore           Float
+  domainBreakdown        Json // [{ domainId, name, accuracy, questionCount }]
+  objectiveBreakdown     Json
+  skillBreakdown         Json
+  priorities             Json // ordered [{ domainId, name, rank }]
+  createdAt              DateTime             @default(now())
+}
+
+// ---------- Mastery, study plan ----------
+
+enum MasteryTrend {
+  NEW
+  IMPROVING
+  DECLINING
+  STABLE
+}
+
+enum RecommendationPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model MasteryRecord {
+  id                 String       @id @default(cuid())
+  userId             String
+  user               User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillId            String
+  skill              Skill        @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  masteryScore       Float        @default(0) // 0-100
+  questionsAttempted Int          @default(0)
+  questionsCorrect   Int          @default(0)
+  correctStreak      Int          @default(0)
+  incorrectStreak    Int          @default(0)
+  trend              MasteryTrend @default(NEW)
+  lastReviewedAt     DateTime?
+  reviewCount        Int          @default(0)
+  nextReviewAt       DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@unique([userId, skillId])
+  @@index([userId, nextReviewAt])
+}
+
+enum StudyPlanStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+model StudyPlan {
+  id         String          @id @default(cuid())
+  userId     String
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  examId     String
+  exam       Exam            @relation(fields: [examId], references: [id])
+  status     StudyPlanStatus @default(ACTIVE)
+  totalWeeks Int             @default(8)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  items StudyPlanItem[]
+
+  @@index([userId, status])
+}
+
+enum StudyPlanItemStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+model StudyPlanItem {
+  id          String                 @id @default(cuid())
+  studyPlanId String
+  studyPlan   StudyPlan              @relation(fields: [studyPlanId], references: [id], onDelete: Cascade)
+  skillId     String
+  skill       Skill                  @relation(fields: [skillId], references: [id])
+  weekNumber  Int
+  order       Int                    @default(0)
+  priority    RecommendationPriority @default(MEDIUM)
+  status      StudyPlanItemStatus    @default(PENDING)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  @@index([studyPlanId])
+  @@index([skillId])
+}
+
+// ---------- Practice exams ----------
+
+model PracticeExam {
+  id               String   @id @default(cuid())
+  examId           String
+  exam             Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  name             String
+  questionCount    Int      @default(50)
+  timeLimitMinutes Int      @default(120)
+  published        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  attempts PracticeExamAttempt[]
+
+  @@index([examId])
+}
+
+enum ExamMode {
+  TIMED
+  UNTIMED
+}
+
+model PracticeExamAttempt {
+  id                 String        @id @default(cuid())
+  practiceExamId     String
+  practiceExam       PracticeExam  @relation(fields: [practiceExamId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode               ExamMode      @default(UNTIMED)
+  status             AttemptStatus @default(IN_PROGRESS)
+  startedAt          DateTime      @default(now())
+  completedAt        DateTime?
+  score              Float?
+  domainBreakdown    Json?
+  flaggedQuestionIds String[]      @default([])
+
+  attempt Attempt?
+
+  @@index([userId, practiceExamId])
+}
+
+// ---------- Missed questions / bookmarks ----------
+
+model Mistake {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionId    String
+  question      Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  timesMissed   Int      @default(1)
+  firstMissedAt DateTime @default(now())
+  lastMissedAt  DateTime @default(now())
+  hidden        Boolean  @default(false)
+  favorited     Boolean  @default(false)
+
+  @@unique([userId, questionId])
+  @@index([userId, hidden])
+}
+
+model Bookmark {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, questionId])
+}
+
+// ---------- Commerce & access ----------
+
+model Product {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  description  String?
+  durationDays Int      @default(365)
+  priceCents   Int
+  examId       String? // null = all-exam access
+  exam         Exam?    @relation(fields: [examId], references: [id])
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  purchases    Purchase[]
+  accessGrants AccessGrant[]
+}
+
+enum CouponDiscountType {
+  PERCENT
+  FIXED
+}
+
+model Coupon {
+  id             String             @id @default(cuid())
+  code           String             @unique
+  discountType   CouponDiscountType
+  amount         Int // percent (0-100) or cents, per discountType
+  active         Boolean            @default(true)
+  expiresAt      DateTime?
+  maxRedemptions Int?
+  timesRedeemed  Int                @default(0)
+  createdAt      DateTime           @default(now())
+
+  purchases Purchase[]
+}
+
+enum PurchaseStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model Purchase {
+  id                    String         @id @default(cuid())
+  userId                String
+  user                  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId             String
+  product               Product        @relation(fields: [productId], references: [id])
+  couponId              String?
+  coupon                Coupon?        @relation(fields: [couponId], references: [id])
+  stripeSessionId       String?        @unique
+  stripePaymentIntentId String?        @unique
+  amountCents           Int
+  status                PurchaseStatus @default(PENDING)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  accessGrant AccessGrant?
+
+  @@index([userId])
+}
+
+enum AccessGrantSource {
+  PURCHASE
+  ADMIN_GRANT
+  PROMO
+  SCHOOL_LICENSE
+}
+
+model AccessGrant {
+  id         String            @id @default(cuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId  String?
+  product    Product?          @relation(fields: [productId], references: [id])
+  purchaseId String?           @unique
+  purchase   Purchase?         @relation(fields: [purchaseId], references: [id])
+  examId     String? // null = all-exam access
+  exam       Exam?             @relation(fields: [examId], references: [id])
+  source     AccessGrantSource @default(PURCHASE)
+  startDate  DateTime          @default(now())
+  expiresAt  DateTime
+  revoked    Boolean           @default(false)
+  createdAt  DateTime          @default(now())
+
+  @@index([userId, expiresAt])
+}
+
+// ---------- Audit ----------
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String
+  actor       User     @relation(fields: [actorUserId], references: [id])
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId])
+  @@index([entityType, entityId])
+}
